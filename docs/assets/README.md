@@ -1,6 +1,12 @@
 # Assets
 
-Notes and reference documentation on Archlord's original game data and file formats (e.g. `.dff`, `.txd`, RenderWare chunk structures, terrain/minimap data, archive formats). This section is currently a placeholder — content will be added as reverse-engineering findings are written up.
+Notes and reference documentation on Archlord's original game data and file formats.
+
+| Page | Description |
+|---|---|
+| [extraction.md](extraction.md) | How Archlord client data is packed/encrypted, and how to extract & decrypt it |
+
+More format notes (`.dff`, `.txd`, RenderWare chunk structures, terrain/minimap data, etc.) will be added here as reverse-engineering findings are written up.
 
 For hands-on tooling that works with these formats, see [../tools/](../tools/README.md).
 
