@@ -1,8 +1,0 @@
-[package]
-name = "rw_model_dump"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-rw_dff_model = { path = "../../libs/rw_dff_model" }
-serde_json = "1"

@@ -17,20 +17,22 @@ This repository is used to structure and organize all necessary source data for 
 
 ## 📂 Repository Structure
 
+This repository is the **central documentation hub** for the Archlord Remake project. It does not contain the Rust tool suite itself anymore — that lives in its own repository (see below).
+
 ```
-💾 Archlord-Rebuild
+💾 ArchlordRemake
  ├── 📄 README.md                  # This file
- ├── 📂 Assets                     # Graphics, textures, models
- │   ├── 📂 Characters             # Character models & animations
- │   ├── 📂 Environment            # Environment assets (maps, buildings, vegetation)
- │   ├── 📂 UI                     # Interface graphics
- │   └── ...
- ├── 📂 Scripts                    # Game mechanics & logic (Blueprints & C++)
- ├── 📂 Server                     # Networking & server code
- ├── 📂 Documentation              # Design documents & analysis
- ├── 📂 Tools                      # Conversion scripts, plugins & utilities
+ ├── 📂 Scripts                    # Blender import plugins (DFF/Terrain)
  └── ...
 ```
+
+## 🔗 Related Repositories
+
+All repositories below are tracked in the shared [Archlord Remake project board](https://github.com/orgs/Quapori/projects/2).
+
+| Repository | Purpose |
+|---|---|
+| [Quapori/Archlord-AIO](https://github.com/Quapori/Archlord-AIO) | Rust tool suite for extracting, converting and exporting original game assets (DFF/TXD/RW → glTF/PNG/CSV, etc.), with its own versioned releases |
 
 ---
 

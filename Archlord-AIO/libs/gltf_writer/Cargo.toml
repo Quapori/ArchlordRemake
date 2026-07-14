@@ -1,9 +1,0 @@
-[package]
-name = "gltf_writer"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.17"
-rw_dff_model = { path = "../../libs/rw_dff_model" }
