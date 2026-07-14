@@ -1,70 +1,68 @@
-# Extracting & Decrypting Archlord Client Data
+# Archlord Client Data — Extraction & Decryption Format
 
-How Archlord's client data is packed and decrypted, and how to unpack it using the Rust code in [Archlord-AIO](https://github.com/Quapori/Archlord-AIO). This page covers **extraction and decryption only** — conversion of individual formats (`.txd` → `.png`, `.dff` → `.gltf`, etc.) is covered by the other Archlord-AIO tools, not here.
-
-All source references below point to `libs/shared_utils/src/*.rs` and `apps/extractor/src/main.rs` in Archlord-AIO.
+Reverse-engineered notes on how Archlord's client data is packed and encrypted, and what's necessary to unlock it. This describes the **format and process only** — it is independent of any specific programming language or implementation. This page covers **extraction and decryption only**; interpreting individual unpacked formats (models, textures, terrain, etc.) is a separate topic.
 
 ## 1. Two kinds of packed data
 
 An Archlord client installation contains two categories of files that need to be unlocked:
 
-1. **Loose files** sitting directly in the client directory tree — `.ini`, `.txt`, `.xml`, plus already-plain assets like `.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`.
-2. **Packed DAT archives** — pairs of `data.dat` (raw payload) + `reference.dat` (encrypted file table) that bundle many files together, plus `.ma1`/`.ma2` files.
+1. **Loose files** sitting directly in the client directory tree — configuration/text data (`.ini`, `.txt`, `.xml`) plus already-plain assets (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`).
+2. **Packed archives** — pairs of a `data.dat` (raw payload blob) and a `reference.dat` (encrypted file table) that bundle many files together. `.ma1`/`.ma2` files also exist alongside these but their internal format has not been reverse-engineered yet — no known way to unpack them so far.
 
-`find_files()` (`file_utils.rs`) walks the client directory recursively to collect both kinds, skipping any subfolder named `low` or `medium` (alternate-quality asset variants).
+When scanning a client installation for these files, alternate-quality asset variants tend to live in sibling folders named `low` / `medium` and can generally be skipped if you only care about the primary assets.
 
 ## 2. Encryption scheme
 
-Everything encrypted uses the same primitive: **RC4**, keyed with the **MD5 hash of a fixed password** (`decryption.rs`):
+Everything encrypted uses the same primitive: **RC4**, keyed with the **MD5 hash of a fixed password**. RC4 is symmetric, so the same operation both encrypts and decrypts:
 
-| Key | Password | Used for |
-|---|---|---|
-| `DecryptKey::Default` | `"1111"` | Loose `.ini`/`.txt`/`.xml` files, and every DAT archive's `reference.dat` table, and `.ini` entries packed inside a DAT archive |
-| `DecryptKey::Texture` | `"asdfqwer"` | `.tx1` entries packed inside a DAT archive |
-
-```rust
-let key_hash = Md5::digest(password_bytes);
-let mut cipher: Rc4<U16> = Rc4::new_from_slice(&key_hash).unwrap();
-cipher.apply_keystream(buffer); // decrypts in place
+```
+key   = MD5(password)
+plain = RC4(key, encrypted_bytes)
 ```
 
-There is no per-file salt or nonce — the same password/key is reused for every file of a given kind.
+Two passwords have been identified, used in different contexts:
+
+| Password | Used for |
+|---|---|
+| `"1111"` | Loose `.ini`/`.txt`/`.xml` files, the file table inside every archive (see below), and `.ini` entries packed inside an archive |
+| `"asdfqwer"` | `.tx1` entries packed inside an archive |
+
+There is no per-file salt or nonce — the same password/key is reused for every file of a given kind, which is what makes bulk decryption possible at all.
 
 ## 3. Loose files
 
-`process_regular_files()` (`file_utils.rs`) decides per file, based on its name, what to do (`should_skip_decryption()`):
+Not every loose file needs the same treatment; the rules appear to be based on the file name and extension:
 
 | Rule | Files | Action |
 |---|---|---|
-| Ignore | `archlordgb.ini` | not copied at all |
-| Copy only | `ggpoint.ini`, `coption.ini`, `autopickup.xml`, `loginsettings.txt`, and any `obj#####.ini` / `obs####.ini` (regex `^obj\d{5}\.ini$\|^obs\d{4}\.ini$`) | copied unmodified — these are already plaintext |
-| Decrypt | everything else | RC4-decrypted **only if** the extension is `.ini`, `.txt` or `.xml` (`FileExtension::should_decrypt()`); other "relevant" extensions (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`) are copied as-is since they aren't encrypted to begin with |
+| Ignore | one specific file (an `.ini` holding region/build info) | left alone entirely |
+| Copy only | a handful of specific config files (e.g. login/UI settings), and any file matching the pattern of an object-template index (`obj#####.ini` / `obs####.ini`) | copied unmodified — these are already plaintext despite the extension |
+| Decrypt | everything else with a "relevant" extension | only `.ini` / `.txt` / `.xml` are actually encrypted and need the RC4 step; other relevant extensions (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`) are already stored as plain data and just need to be picked up as-is |
 
-## 4. DAT archives
+In short: encryption in the loose-file tree is limited to text/config data — binary assets are not encrypted, just distributed alongside the encrypted files.
 
-`extract_from_dat()` (`extraction.rs`), driven by `process_dat_files()` (`dat_utils.rs`), only fires for a `data.dat` that has a sibling `reference.dat` next to it:
+## 4. Packed archives
 
-1. `reference.dat` is read fully into memory and RC4-decrypted with the **Default** key.
-2. The decrypted table is parsed as little-endian binary: `u32` file count → `u32` folder-name length + folder name (the extraction subfolder) → then, repeated per file: `u32` name length + name, `u32` offset, `u32` size.
-3. For each entry, `size` bytes are read out of `data.dat` at `offset`.
-4. Only two extensions get decrypted at this stage: `.ini` (Default key) and `.tx1` (Texture key). Every other extension is written out exactly as stored.
-5. Two extensions get renamed on output (not decrypted, just relabelled): `.bm1` → `.bmp`, `.pk` → `.wav`.
-6. `.ma1`/`.ma2` files are picked up by `find_files()` but are **not** processed by this code path — there is currently no unpacking logic for them.
+For every `data.dat` that has a sibling `reference.dat` next to it:
 
-## 5. Running the extraction
+1. Read `reference.dat` fully and RC4-decrypt it with the password `"1111"`.
+2. Parse the decrypted bytes as a little-endian binary table:
+   - `uint32` — number of files
+   - `uint32` — length of a folder name, followed by that many bytes (the name of the subfolder everything in this archive should be extracted into)
+   - then, repeated once per file: `uint32` name length + name bytes, `uint32` offset, `uint32` size — pointing into `data.dat`
+3. For each entry, read `size` bytes out of `data.dat` starting at `offset`.
+4. Decrypt that chunk only if its extension calls for it: `.ini` → RC4 with `"1111"`, `.tx1` → RC4 with `"asdfqwer"`. Every other extension is written out exactly as stored (not encrypted at the archive level either).
+5. Two extensions get **renamed** on output, without any decryption — this looks like a historical/tooling quirk rather than actual encryption: `.bm1` → `.bmp`, `.pk` → `.wav`.
 
-1. Run `extractor` (or `core_main`) once — it auto-creates `config.ini` next to the binary and opens it in Notepad:
-   ```ini
-   [PATHS]
-   SOURCE=D:\Archlord-EMU\Webzen\Archlord
-   DESTINATION=D:\Archlord-EMU\Rust-Export-Test
-   ```
-   Fill in `SOURCE` (your client installation) and `DESTINATION`, save, press Enter to continue.
-2. Run it again to perform the extraction:
-   ```bash
-   cargo run -p extractor --release
-   ```
+## 5. Practical process
 
-> **Note:** `extractor` only calls `process_dat_files()` — it unpacks and decrypts the `data.dat`/`reference.dat` pairs, but it does **not** call `process_regular_files()`, so loose `.ini`/`.txt`/`.xml` files sitting directly in the client tree are left untouched by this binary. Today, decrypting *both* loose files and DAT archives in one pass only happens as part of `core_main`'s full pipeline, which additionally launches unrelated conversion tools (`minimap`, `obj_checker`, `txd_converter`, `dff2gltf`) — out of scope for pure extraction/decryption.
+1. Locate the client installation directory.
+2. Walk it recursively, collecting both loose files and archive pairs (skip `low`/`medium` variant folders if not needed).
+3. For loose files: apply the ignore/copy/decrypt rules from section 3.
+4. For each `data.dat` + `reference.dat` pair: decrypt the reference table, parse it, then extract and selectively decrypt each entry as described in section 4.
+
+> **Watch out for:** it's easy to build a tool that only implements one half of this (e.g. only unpacking the archives) and assume the client is fully extracted. Loose configuration files and archive-packed files are two separate code paths — make sure both are actually covered, or you'll end up with an incomplete/partial extraction that looks complete at a glance.
+
+A reference implementation of this whole process exists in the project's tooling (see [../tools/](../tools/README.md)).
 
 Deutsche Version: [extraction.de.md](extraction.de.md)

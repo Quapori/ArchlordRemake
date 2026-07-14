@@ -1,70 +1,68 @@
-# Archlord-Client-Daten extrahieren & entschlüsseln
+# Archlord-Client-Daten — Format für Extraktion & Entschlüsselung
 
-Wie Archlords Client-Daten gepackt und verschlüsselt sind, und wie man sie mit dem Rust-Code aus [Archlord-AIO](https://github.com/Quapori/Archlord-AIO) entpackt. Diese Seite behandelt **ausschließlich Extraktion und Entschlüsselung** — die Konvertierung einzelner Formate (`.txd` → `.png`, `.dff` → `.gltf` usw.) wird von den anderen Archlord-AIO-Tools übernommen, nicht hier.
-
-Alle Quellcode-Verweise unten beziehen sich auf `libs/shared_utils/src/*.rs` und `apps/extractor/src/main.rs` in Archlord-AIO.
+Reverse-engineerte Notizen dazu, wie Archlords Client-Daten gepackt und verschlüsselt sind und was nötig ist, um sie zu entschlüsseln. Dies beschreibt **nur das Format und den Prozess** — unabhängig von einer bestimmten Programmiersprache oder Implementierung. Diese Seite behandelt **ausschließlich Extraktion und Entschlüsselung**; die Interpretation der einzelnen entpackten Formate (Modelle, Texturen, Terrain usw.) ist ein eigenes Thema.
 
 ## 1. Zwei Arten gepackter Daten
 
 Eine Archlord-Client-Installation enthält zwei Kategorien von Dateien, die entschlüsselt/entpackt werden müssen:
 
-1. **Lose Dateien**, die direkt im Client-Verzeichnisbaum liegen — `.ini`, `.txt`, `.xml`, sowie bereits unverschlüsselte Assets wie `.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`.
-2. **Gepackte DAT-Archive** — Paare aus `data.dat` (Rohdaten) + `reference.dat` (verschlüsselte Dateitabelle), die viele Dateien bündeln, sowie `.ma1`/`.ma2`-Dateien.
+1. **Lose Dateien**, die direkt im Client-Verzeichnisbaum liegen — Konfigurations-/Textdaten (`.ini`, `.txt`, `.xml`) sowie bereits unverschlüsselte Assets (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`).
+2. **Gepackte Archive** — Paare aus `data.dat` (Roh-Nutzdaten) und `reference.dat` (verschlüsselte Dateitabelle), die viele Dateien bündeln. Daneben existieren auch `.ma1`/`.ma2`-Dateien, deren internes Format bisher nicht reverse-engineert wurde — dafür gibt es bislang keine bekannte Entpack-Methode.
 
-`find_files()` (`file_utils.rs`) durchsucht das Client-Verzeichnis rekursiv nach beiden Arten und überspringt dabei Unterordner namens `low` oder `medium` (alternative Qualitätsvarianten der Assets).
+Beim Durchsuchen einer Client-Installation nach diesen Dateien liegen alternative Qualitätsvarianten der Assets meist in Nachbarordnern namens `low` / `medium` und können in der Regel übersprungen werden, wenn nur die primären Assets relevant sind.
 
 ## 2. Verschlüsselungsschema
 
-Alles Verschlüsselte nutzt dasselbe Prinzip: **RC4**, geschlüsselt mit dem **MD5-Hash eines festen Passworts** (`decryption.rs`):
+Alles Verschlüsselte nutzt dasselbe Prinzip: **RC4**, geschlüsselt mit dem **MD5-Hash eines festen Passworts**. RC4 ist symmetrisch, die gleiche Operation ver- und entschlüsselt also:
 
-| Key | Passwort | Verwendet für |
-|---|---|---|
-| `DecryptKey::Default` | `"1111"` | Lose `.ini`/`.txt`/`.xml`-Dateien, die `reference.dat`-Tabelle jedes DAT-Archivs, sowie `.ini`-Einträge innerhalb eines DAT-Archivs |
-| `DecryptKey::Texture` | `"asdfqwer"` | `.tx1`-Einträge innerhalb eines DAT-Archivs |
-
-```rust
-let key_hash = Md5::digest(password_bytes);
-let mut cipher: Rc4<U16> = Rc4::new_from_slice(&key_hash).unwrap();
-cipher.apply_keystream(buffer); // entschlüsselt in place
+```
+key    = MD5(passwort)
+klar   = RC4(key, verschlüsselte_bytes)
 ```
 
-Es gibt kein dateispezifisches Salt/Nonce — dasselbe Passwort/Key wird für jede Datei einer Art wiederverwendet.
+Zwei Passwörter wurden identifiziert, die in unterschiedlichen Kontexten verwendet werden:
+
+| Passwort | Verwendet für |
+|---|---|
+| `"1111"` | Lose `.ini`/`.txt`/`.xml`-Dateien, die Dateitabelle in jedem Archiv (siehe unten), sowie `.ini`-Einträge innerhalb eines Archivs |
+| `"asdfqwer"` | `.tx1`-Einträge innerhalb eines Archivs |
+
+Es gibt kein dateispezifisches Salt/Nonce — dasselbe Passwort/Key wird für jede Datei einer Art wiederverwendet, was Massenentschlüsselung überhaupt erst praktikabel macht.
 
 ## 3. Lose Dateien
 
-`process_regular_files()` (`file_utils.rs`) entscheidet pro Datei anhand ihres Namens, was zu tun ist (`should_skip_decryption()`):
+Nicht jede lose Datei braucht dieselbe Behandlung; die Regeln scheinen auf Dateiname und Endung zu basieren:
 
 | Regel | Dateien | Aktion |
 |---|---|---|
-| Ignorieren | `archlordgb.ini` | wird gar nicht kopiert |
-| Nur kopieren | `ggpoint.ini`, `coption.ini`, `autopickup.xml`, `loginsettings.txt`, sowie jede `obj#####.ini` / `obs####.ini` (Regex `^obj\d{5}\.ini$\|^obs\d{4}\.ini$`) | unverändert kopiert — diese liegen schon als Klartext vor |
-| Entschlüsseln | alles andere | RC4-entschlüsselt **nur wenn** die Endung `.ini`, `.txt` oder `.xml` ist (`FileExtension::should_decrypt()`); andere "relevante" Endungen (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`) werden unverändert kopiert, da sie ohnehin nicht verschlüsselt sind |
+| Ignorieren | eine bestimmte Datei (eine `.ini` mit Region-/Build-Info) | wird komplett übersprungen |
+| Nur kopieren | eine Handvoll bestimmter Konfigurationsdateien (z.B. Login-/UI-Einstellungen), sowie jede Datei, die dem Muster eines Objektvorlagen-Index entspricht (`obj#####.ini` / `obs####.ini`) | unverändert kopiert — liegen trotz der Endung schon als Klartext vor |
+| Entschlüsseln | alles andere mit "relevanter" Endung | nur `.ini` / `.txt` / `.xml` sind tatsächlich verschlüsselt und brauchen den RC4-Schritt; andere relevante Endungen (`.wav`, `.dds`, `.bmp`, `.png`, `.jpg`, `.tif`, `.pk`, `.mp3`) liegen bereits als Klardaten vor und müssen nur unverändert übernommen werden |
 
-## 4. DAT-Archive
+Kurz gesagt: Verschlüsselung im losen Dateibaum beschränkt sich auf Text-/Konfigurationsdaten — binäre Assets sind nicht verschlüsselt, sondern liegen nur neben den verschlüsselten Dateien.
 
-`extract_from_dat()` (`extraction.rs`), aufgerufen von `process_dat_files()` (`dat_utils.rs`), greift nur, wenn zu einer `data.dat` eine `reference.dat` im selben Ordner existiert:
+## 4. Gepackte Archive
 
-1. `reference.dat` wird vollständig eingelesen und mit dem **Default**-Key RC4-entschlüsselt.
-2. Die entschlüsselte Tabelle wird als Little-Endian-Binärdaten geparst: `u32` Dateianzahl → `u32` Länge des Ordnernamens + Ordnername (das Extraktions-Unterverzeichnis) → danach, pro Datei wiederholt: `u32` Namenslänge + Name, `u32` Offset, `u32` Größe.
-3. Für jeden Eintrag werden `size` Bytes aus `data.dat` ab `offset` gelesen.
-4. Nur zwei Endungen werden auf dieser Stufe entschlüsselt: `.ini` (Default-Key) und `.tx1` (Texture-Key). Alle anderen Endungen werden exakt so geschrieben, wie sie gespeichert sind.
-5. Zwei Endungen werden beim Schreiben umbenannt (nicht entschlüsselt, nur umbenannt): `.bm1` → `.bmp`, `.pk` → `.wav`.
-6. `.ma1`/`.ma2`-Dateien werden von `find_files()` erfasst, aber von diesem Code-Pfad **nicht** verarbeitet — dafür gibt es aktuell keine Entpack-Logik.
+Für jede `data.dat`, zu der eine `reference.dat` im selben Ordner existiert:
 
-## 5. Extraktion durchführen
+1. `reference.dat` vollständig einlesen und mit dem Passwort `"1111"` RC4-entschlüsseln.
+2. Die entschlüsselten Bytes als Little-Endian-Binärtabelle parsen:
+   - `uint32` — Anzahl der Dateien
+   - `uint32` — Länge eines Ordnernamens, gefolgt von entsprechend vielen Bytes (der Name des Unterordners, in den alles aus diesem Archiv extrahiert werden soll)
+   - danach, einmal pro Datei wiederholt: `uint32` Namenslänge + Name-Bytes, `uint32` Offset, `uint32` Größe — verweisen in `data.dat`
+3. Für jeden Eintrag `size` Bytes aus `data.dat` ab `offset` lesen.
+4. Diesen Block nur entschlüsseln, wenn die Endung es verlangt: `.ini` → RC4 mit `"1111"`, `.tx1` → RC4 mit `"asdfqwer"`. Alle anderen Endungen werden exakt so geschrieben, wie gespeichert (auch auf Archiv-Ebene nicht verschlüsselt).
+5. Zwei Endungen werden beim Schreiben **umbenannt**, ohne jede Entschlüsselung — wirkt eher wie eine historische Tooling-Eigenheit als echte Verschlüsselung: `.bm1` → `.bmp`, `.pk` → `.wav`.
 
-1. `extractor` (oder `core_main`) einmal starten — dabei wird automatisch eine `config.ini` neben der Binary erzeugt und in Notepad geöffnet:
-   ```ini
-   [PATHS]
-   SOURCE=D:\Archlord-EMU\Webzen\Archlord
-   DESTINATION=D:\Archlord-EMU\Rust-Export-Test
-   ```
-   `SOURCE` (deine Client-Installation) und `DESTINATION` eintragen, speichern, Enter drücken um fortzufahren.
-2. Erneut starten, um die eigentliche Extraktion durchzuführen:
-   ```bash
-   cargo run -p extractor --release
-   ```
+## 5. Praktischer Ablauf
 
-> **Hinweis:** `extractor` ruft nur `process_dat_files()` auf — es entpackt und entschlüsselt die `data.dat`/`reference.dat`-Paare, ruft aber **nicht** `process_regular_files()` auf. Lose `.ini`/`.txt`/`.xml`-Dateien direkt im Client-Verzeichnisbaum bleiben von dieser Binary also unangetastet. Aktuell werden lose Dateien *und* DAT-Archive nur gemeinsam entschlüsselt, wenn man die komplette `core_main`-Pipeline laufen lässt — die aber zusätzlich fachfremde Konvertierungstools (`minimap`, `obj_checker`, `txd_converter`, `dff2gltf`) startet, was außerhalb des Fokus reiner Extraktion/Entschlüsselung liegt.
+1. Client-Installationsverzeichnis lokalisieren.
+2. Rekursiv durchsuchen und dabei sowohl lose Dateien als auch Archiv-Paare erfassen (Ordner `low`/`medium` überspringen, falls nicht benötigt).
+3. Für lose Dateien: die Ignorieren-/Nur-kopieren-/Entschlüsseln-Regeln aus Abschnitt 3 anwenden.
+4. Für jedes `data.dat` + `reference.dat`-Paar: die Referenztabelle entschlüsseln, parsen, dann jeden Eintrag wie in Abschnitt 4 beschrieben extrahieren und selektiv entschlüsseln.
+
+> **Worauf zu achten ist:** Es passiert leicht, dass ein Tool nur die Hälfte davon umsetzt (z.B. nur die Archive entpackt) und man annimmt, der Client sei vollständig extrahiert. Lose Konfigurationsdateien und archivierte Dateien sind zwei getrennte Verarbeitungswege — stelle sicher, dass beide tatsächlich abgedeckt sind, sonst landet man bei einer unvollständigen Extraktion, die auf den ersten Blick vollständig aussieht.
+
+Eine Referenzimplementierung dieses gesamten Prozesses existiert im Tooling des Projekts (siehe [../tools/](../tools/README.de.md)).
 
 English version: [extraction.md](extraction.md)
