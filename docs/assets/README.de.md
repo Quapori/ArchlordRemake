@@ -8,6 +8,7 @@ Notizen und Referenzdokumentation zu Archlords Original-Spieldaten und Dateiform
 | [animation.de.md](animation.de.md) | Charakteranimationsformat, Skelettaufbau, und wie Meshes/Skelette/Animationen zusammenhängen |
 | [meshes.de.md](meshes.de.md) | Charakter-/Item-/Objekt-Mesh-Geometrieformat, Materialien, und wie diese Assets organisiert/benannt sind |
 | [terrain.de.md](terrain.de.md) | Welt-/Block-/Sektor-Koordinatensystem, Terrain-Mesh, Terrain-Textur-Blending, sowie Octree-/Gras-/Wasser-Sidecar-Daten |
+| [text-formats.de.md](text-formats.de.md) | Aufbau der losen Text-Konfigurationsdateien (`.ini`, `.txt`, `.xml`): INI-Grammatik (klassisch vs. indiziert), TXT-Tabellenformate, und wie diese Dateien sich über TIDs gegenseitig referenzieren |
 
 Weitere Format-Notizen (`.txd` usw.) werden ergänzt, sobald Reverse-Engineering-Erkenntnisse dokumentiert werden.
 

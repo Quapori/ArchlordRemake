@@ -8,6 +8,7 @@ Notes and reference documentation on Archlord's original game data and file form
 | [animation.md](animation.md) | Character animation format, skeleton structure, and how meshes/skeletons/animations link together |
 | [meshes.md](meshes.md) | Character/item/object mesh geometry format, materials, and how these assets are organized/named |
 | [terrain.md](terrain.md) | World/block/sector coordinate system, terrain mesh, terrain texture blending, and octree/grass/water sidecar data |
+| [text-formats.md](text-formats.md) | Structure of the loose text configuration files (`.ini`, `.txt`, `.xml`): INI grammar (classic vs. indexed), TXT table formats, and how these files reference each other via TIDs |
 
 More format notes (`.txd`, etc.) will be added here as reverse-engineering findings are written up.
 
